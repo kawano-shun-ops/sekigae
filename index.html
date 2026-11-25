@@ -1,0 +1,1250 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>スマート席替えシステム - クラス座席配置ジェネレーター</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome (Icons) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts: Inter & Noto Sans JP -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Inter"', '"Noto Sans JP"', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* カスタムスクロールバーと印刷用スタイル */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        @media print {
+            body { background: white !important; }
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+            .print-container {
+                width: 100% !important;
+                max-width: 100% !important;
+                box-shadow: none !important;
+                border: none !important;
+                padding: 0 !important;
+                margin: 0 !important;
+            }
+            .seat-card {
+                border: 2px solid #334155 !important;
+                box-shadow: none !important;
+                break-inside: avoid;
+            }
+        }
+
+        /* 座席のアニメーション */
+        @keyframes popIn {
+            0% { transform: scale(0.9); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .seat-animate {
+            animation: popIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased min-h-screen flex flex-col">
+
+    <!-- トースト通知（alertの代替） -->
+    <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+    <!-- ヘッダー -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-30 no-print">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="bg-indigo-600 text-white p-2 rounded-xl shadow-sm">
+                    <i class="fa-solid fa-chair text-lg"></i>
+                </div>
+                <div>
+                    <h1 class="text-lg sm:text-xl font-bold text-slate-900 tracking-tight">スマート席替えシステム</h1>
+                    <p class="text-xs text-slate-500 hidden sm:block">条件指定・最適化アルゴリズム搭載 座席配置ツール</p>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-2 sm:gap-3">
+                <button onclick="saveToLocalStorage()" class="px-3 py-2 text-xs sm:text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition flex items-center gap-1.5" title="ブラウザに現在の設定と配置を保存">
+                    <i class="fa-solid fa-floppy-disk text-indigo-600"></i>
+                    <span class="hidden md:inline">保存</span>
+                </button>
+                <button onclick="resetAllData()" class="px-3 py-2 text-xs sm:text-sm font-medium text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg transition flex items-center gap-1.5" title="初期状態に戻す">
+                    <i class="fa-solid fa-rotate-left"></i>
+                    <span class="hidden md:inline">初期化</span>
+                </button>
+                <button onclick="window.print()" class="px-3 py-2 text-xs sm:text-sm font-medium text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg transition flex items-center gap-1.5 shadow-sm">
+                    <i class="fa-solid fa-print text-slate-600"></i>
+                    <span class="hidden sm:inline">印刷</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- メインコンテンツ -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        <!-- 左カラム：設定パネル（印刷時非表示） -->
+        <div class="lg:col-span-5 xl:col-span-4 flex flex-col gap-5 no-print">
+            
+            <!-- ① 座席レイアウト設定 -->
+            <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                        <span class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs flex items-center justify-center font-bold">1</span>
+                        教室の縦・横サイズ
+                    </h2>
+                    <span id="seat-count-badge" class="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">
+                        有効座席: 30席
+                    </span>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4 mb-3">
+                    <div>
+                        <label class="block text-xs font-medium text-slate-600 mb-1">縦（行 / 前後）</label>
+                        <div class="flex items-center">
+                            <button onclick="changeGridSize('rows', -1)" class="w-9 h-9 rounded-l-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-600"><i class="fa-solid fa-minus text-xs"></i></button>
+                            <input type="number" id="input-rows" min="1" max="12" value="5" onchange="updateGridFromInput()" class="w-full h-9 border-y border-slate-300 text-center font-semibold text-slate-800 focus:outline-none">
+                            <button onclick="changeGridSize('rows', 1)" class="w-9 h-9 rounded-r-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-600"><i class="fa-solid fa-plus text-xs"></i></button>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-600 mb-1">横（列 / 左右）</label>
+                        <div class="flex items-center">
+                            <button onclick="changeGridSize('cols', -1)" class="w-9 h-9 rounded-l-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-600"><i class="fa-solid fa-minus text-xs"></i></button>
+                            <input type="number" id="input-cols" min="1" max="12" value="6" onchange="updateGridFromInput()" class="w-full h-9 border-y border-slate-300 text-center font-semibold text-slate-800 focus:outline-none">
+                            <button onclick="changeGridSize('cols', 1)" class="w-9 h-9 rounded-r-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-600"><i class="fa-solid fa-plus text-xs"></i></button>
+                        </div>
+                    </div>
+                </div>
+                <p class="text-xs text-slate-500 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                    <i class="fa-solid fa-circle-info text-indigo-500 mr-1"></i>
+                    右側の座席をクリックすると<strong>「座らない席（空席）」</strong>の切り替えや、<strong>「特定の人の固定指定」</strong>ができます。
+                </p>
+            </section>
+
+            <!-- 生徒名簿リスト -->
+            <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                        <span class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs flex items-center justify-center font-bold">2</span>
+                        生徒・メンバー名簿
+                    </h2>
+                    <span id="student-count-badge" class="text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700">
+                        人数: 30人
+                    </span>
+                </div>
+
+                <div class="mb-2 flex justify-between items-center">
+                    <span class="text-xs text-slate-500">1行に1人ずつ入力（改行区切り）</span>
+                    <button onclick="generateSampleStudents()" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium underline">
+                        サンプル名簿を入力
+                    </button>
+                </div>
+                <textarea id="student-list-input" rows="6" oninput="handleStudentListChange()" placeholder="例：&#10;1. 佐藤 健太&#10;2. 鈴木 陽菜&#10;3. 高橋 翔太..." class="w-full p-3 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition leading-relaxed"></textarea>
+                
+                <div id="count-warning" class="hidden mt-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-start gap-2">
+                    <i class="fa-solid fa-triangle-exclamation mt-0.5 text-amber-500"></i>
+                    <span id="count-warning-text">人数と有効座席数が一致していません。</span>
+                </div>
+            </section>
+
+            <!-- ③ 人間関係（近づける・離す）ルール設定 -->
+            <section class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                        <span class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs flex items-center justify-center font-bold">3</span>
+                        距離の条件（近づける・離す）
+                    </h2>
+                </div>
+
+                <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 mb-3 space-y-2.5">
+                    <div class="grid grid-cols-2 gap-2">
+                        <select id="rule-person-a" class="w-full text-xs sm:text-sm p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:border-indigo-500">
+                            <option value="">人を選択 A</option>
+                        </select>
+                        <select id="rule-person-b" class="w-full text-xs sm:text-sm p-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:border-indigo-500">
+                            <option value="">人を選択 B</option>
+                        </select>
+                    </div>
+                    <div class="flex gap-2">
+                        <select id="rule-type" class="flex-1 text-xs sm:text-sm p-2 rounded-lg border border-slate-300 bg-white font-medium focus:outline-none focus:border-indigo-500">
+                            <option value="apart">⚡ 離してほしい（周囲・隣を避ける）</option>
+                            <option value="near">🤝 近づけてほしい（隣・前後に配置）</option>
+                        </select>
+                        <button onclick="addRelationRule()" class="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs sm:text-sm font-medium rounded-lg transition shrink-0">
+                            追加
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 登録済みルール一覧 -->
+                <div id="rules-list" class="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    <p class="text-xs text-slate-400 text-center py-3">条件は登録されていません</p>
+                </div>
+            </section>
+
+        </div>
+
+        <!-- 右カラム：座席プレビュー＆実行エリア -->
+        <div class="lg:col-span-7 xl:col-span-8 flex flex-col gap-4">
+            
+            <!-- アクションバー（印刷時非表示） -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-3 no-print">
+                <div class="flex items-center gap-2">
+                    <button onclick="toggleTeacherView()" id="btn-view-toggle" class="px-3.5 py-2 rounded-xl text-xs sm:text-sm font-medium border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 transition flex items-center gap-2">
+                        <i class="fa-solid fa-repeat text-indigo-600"></i>
+                        <span id="view-mode-text">生徒目線（黒板が上）</span>
+                    </button>
+                    <button onclick="exportCSV()" class="px-3 py-2 rounded-xl text-xs sm:text-sm font-medium border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-600 transition flex items-center gap-1.5" title="Excel等で開けるCSV形式でダウンロード">
+                        <i class="fa-solid fa-file-csv text-emerald-600"></i>
+                        <span class="hidden sm:inline">CSV出力</span>
+                    </button>
+                </div>
+
+                <div class="flex items-center gap-2 w-full sm:w-auto justify-end">
+                    <button onclick="clearAssignedSeats()" class="px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-medium text-slate-600 hover:bg-slate-100 transition">
+                        配置クリア
+                    </button>
+                    <button onclick="runSeatingShuffle()" class="flex-1 sm:flex-initial px-6 py-2.5 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 shadow-md hover:shadow-lg transition transform active:scale-95 flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-shuffle"></i>
+                        <span>席替えを実行する</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- ルール達成度ステータスバー -->
+            <div id="status-banner" class="hidden rounded-xl p-3.5 text-sm flex items-center justify-between border no-print">
+                <div class="flex items-center gap-2.5">
+                    <i id="status-icon" class="fa-solid fa-circle-check text-lg"></i>
+                    <span id="status-message" class="font-medium"></span>
+                </div>
+                <span id="status-score" class="text-xs font-bold px-2.5 py-1 rounded-md bg-white/60"></span>
+            </div>
+
+            <!-- 教室座席表キャンバス -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-8 flex-1 flex flex-col justify-between print-container">
+                
+                <!-- 印刷用タイトルヘッダー -->
+                <div class="hidden print-only text-center mb-6">
+                    <h2 class="text-2xl font-bold text-slate-900">クラス座席表</h2>
+                    <p id="print-date" class="text-sm text-slate-500 mt-1"></p>
+                </div>
+
+                <!-- 教卓（上側表示時：生徒目線） -->
+                <div id="blackboard-top" class="w-full flex flex-col items-center mb-6">
+                    <div class="w-3/4 max-w-md bg-emerald-800 text-white text-center py-2.5 rounded-lg shadow-inner border-4 border-amber-800/80 font-bold tracking-widest text-sm">
+                        黒 板 ・ 教 卓
+                    </div>
+                </div>
+
+                <!-- 座席グリッド領域 -->
+                <div class="overflow-x-auto pb-2 flex-1 flex items-center justify-center">
+                    <div id="seating-grid" class="grid gap-2.5 sm:gap-3.5 w-full max-w-4xl mx-auto">
+                        <!-- JSで座席カードを動的生成 -->
+                    </div>
+                </div>
+
+                <!-- 教卓（下側表示時：先生・教卓目線） -->
+                <div id="blackboard-bottom" class="hidden w-full flex-col items-center mt-6">
+                    <div class="w-3/4 max-w-md bg-emerald-800 text-white text-center py-2.5 rounded-lg shadow-inner border-4 border-amber-800/80 font-bold tracking-widest text-sm">
+                        教 卓 ・ 黒 板（先生側）
+                    </div>
+                </div>
+
+                <!-- 凡例ガイド -->
+                <div class="mt-6 pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500 no-print">
+                    <div class="flex flex-wrap items-center gap-4">
+                        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded bg-white border border-slate-300 inline-block"></span> 通常席</span>
+                        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded bg-amber-50 border border-amber-400 inline-block"></span> <i class="fa-solid fa-thumbtack text-amber-600 text-[10px]"></i> 座席指定（固定）</span>
+                        <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded bg-slate-100 border border-dashed border-slate-300 inline-block"></span> 座らない席（空席）</span>
+                    </div>
+                    <div>
+                        <i class="fa-solid fa-hand-pointer mr-1"></i> 席をクリックして設定 / ドラッグで入替
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- 座席設定モーダル（条件①空席設定・条件②座席固定指定） -->
+    <div id="seat-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 no-print">
+        <div class="bg-white rounded-2xl shadow-xl max-w-md w-full overflow-hidden transform transition-all">
+            <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                    <i class="fa-solid fa-chair text-indigo-600"></i>
+                    <span id="modal-seat-title">座席の設定（1行目 - 1列目）</span>
+                </h3>
+                <button onclick="closeSeatModal()" class="text-slate-400 hover:text-slate-600 p-1">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            
+            <div class="p-6 space-y-5">
+                <!-- 座席の状態選択 -->
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">1. この座席の使用設定</label>
+                    <div class="grid grid-cols-2 gap-3">
+                        <button type="button" id="btn-seat-active" onclick="setModalSeatDisabled(false)" class="p-3 rounded-xl border-2 text-left transition flex items-center gap-2.5">
+                            <i class="fa-solid fa-circle-check text-lg"></i>
+                            <div>
+                                <div class="text-sm font-bold">使用する席</div>
+                                <div class="text-[11px] opacity-75">生徒を配置します</div>
+                            </div>
+                        </button>
+                        <button type="button" id="btn-seat-disabled" onclick="setModalSeatDisabled(true)" class="p-3 rounded-xl border-2 text-left transition flex items-center gap-2.5">
+                            <i class="fa-solid fa-ban text-lg"></i>
+                            <div>
+                                <div class="text-sm font-bold">座らない席</div>
+                                <div class="text-[11px] opacity-75">空席・通路にします</div>
+                            </div>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 特定の人の座席指定 -->
+                <div id="modal-pin-section">
+                    <label class="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                        2. この席に座る人を固定指定（任意）
+                    </label>
+                    <select id="modal-student-select" class="w-full p-2.5 text-sm border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-indigo-500 outline-none">
+                        <option value="">-- 指定なし（ランダムに配置） --</option>
+                    </select>
+                    <p class="text-xs text-slate-500 mt-1.5">
+                        <i class="fa-solid fa-thumbtack text-amber-500 mr-1"></i>
+                        選択した人は席替えを実行しても必ずこの席に配置されます（視力配慮など）。
+                    </p>
+                </div>
+            </div>
+
+            <div class="px-6 py-3.5 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+                <button onclick="closeSeatModal()" class="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-200 rounded-xl transition">キャンセル</button>
+                <button onclick="saveSeatModal()" class="px-5 py-2 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-sm transition">設定を反映</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript ロジック -->
+    <script>
+        /**
+         * アプリケーション状態管理
+         */
+        let state = {
+            rows: 5,
+            cols: 6,
+            // seats[r][c] = { disabled: boolean, pinnedStudent: string|null, assignedStudent: string|null }
+            seats: [],
+            students: [],
+            // rules: [{ id: string, personA: string, personB: string, type: 'near' | 'apart' }]
+            rules: [],
+            isTeacherView: false // false: 生徒目線(黒板が上), true: 先生目線(黒板が下)
+        };
+
+        // モーダル編集中の対象座標
+        let editingCoord = { r: 0, c: 0 };
+        let modalTempDisabled = false;
+        // ドラッグ＆ドロップ用
+        let draggedCoord = null;
+
+        /**
+         * 初期化処理
+         */
+        window.addEventListener('DOMContentLoaded', () => {
+            const loaded = loadFromLocalStorage();
+            if (!loaded) {
+                initDefaultData();
+            }
+            renderAll();
+        });
+
+        function initDefaultData() {
+            state.rows = 5;
+            state.cols = 6;
+            document.getElementById('input-rows').value = 5;
+            document.getElementById('input-cols').value = 6;
+            
+            // サンプル生徒30名
+            const sampleNames = [
+                "佐藤 健太", "鈴木 陽菜", "高橋 翔太", "田中 美咲", "伊藤 陸", "渡辺 結衣",
+                "山本 蓮", "中村 葵", "小林 湊", "加藤 凛", "吉田 大翔", "山田 芽依",
+                "佐々木 朝陽", "山口 紬", "松本 樹", "井上 莉子", "木村 悠真", "林 杏",
+                "斎藤 律", "清水 詩", "山崎 颯太", "森 結菜", "池田 碧", "橋本 陽葵",
+                "阿部 暖", "石川 咲良", "山下 悠人", "中島 花", "石井 湊斗", "小川 美月"
+            ];
+            document.getElementById('student-list-input').value = sampleNames.join('\n');
+            state.students = [...sampleNames];
+            
+            initSeatsGrid(5, 6);
+        }
+
+        /**
+         * 座席配列の初期化（既存設定を可能な限り保持）
+         */
+        function initSeatsGrid(newRows, newCols) {
+            const newSeats = [];
+            for (let r = 0; r < newRows; r++) {
+                const rowArr = [];
+                for (let c = 0; c < newCols; c++) {
+                    if (state.seats[r] && state.seats[r][c]) {
+                        rowArr.push({ ...state.seats[r][c] });
+                    } else {
+                        rowArr.push({
+                            disabled: false,
+                            pinnedStudent: null,
+                            assignedStudent: null
+                        });
+                    }
+                }
+                newSeats.push(rowArr);
+            }
+            state.rows = newRows;
+            state.cols = newCols;
+            state.seats = newSeats;
+        }
+
+        /**
+         * ① 縦・横サイズの変更
+         */
+        function changeGridSize(type, delta) {
+            const input = document.getElementById(`input-${type}`);
+            let val = parseInt(input.value) || 1;
+            val = Math.max(1, Math.min(12, val + delta));
+            input.value = val;
+            updateGridFromInput();
+        }
+
+        function updateGridFromInput() {
+            let r = parseInt(document.getElementById('input-rows').value) || 5;
+            let c = parseInt(document.getElementById('input-cols').value) || 6;
+            r = Math.max(1, Math.min(12, r));
+            c = Math.max(1, Math.min(12, c));
+            document.getElementById('input-rows').value = r;
+            document.getElementById('input-cols').value = c;
+
+            initSeatsGrid(r, c);
+            renderAll();
+        }
+
+        /**
+         * 生徒名簿の変更処理
+         */
+        function handleStudentListChange() {
+            const text = document.getElementById('student-list-input').value;
+            // 空行を除去し、重複名があれば番号を振るなどの安全処理
+            const lines = text.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+            const uniqueStudents = [];
+            const nameCounter = {};
+
+            lines.forEach(name => {
+                if (nameCounter[name]) {
+                    nameCounter[name]++;
+                    uniqueStudents.push(`${name}(${nameCounter[name]})`);
+                } else {
+                    nameCounter[name] = 1;
+                    uniqueStudents.push(name);
+                }
+            });
+
+            state.students = uniqueStudents;
+
+            // 名簿から消えた生徒が固定指定や配置に残っていたら解除
+            const studentSet = new Set(state.students);
+            for (let r = 0; r < state.rows; r++) {
+                for (let c = 0; c < state.cols; c++) {
+                    const seat = state.seats[r][c];
+                    if (seat.pinnedStudent && !studentSet.has(seat.pinnedStudent)) {
+                        seat.pinnedStudent = null;
+                    }
+                    if (seat.assignedStudent && !studentSet.has(seat.assignedStudent)) {
+                        seat.assignedStudent = null;
+                    }
+                }
+            }
+
+            // ルールからも存在しない生徒を削除
+            state.rules = state.rules.filter(rule => studentSet.has(rule.personA) && studentSet.has(rule.personB));
+
+            updateCountersAndDropdowns();
+            renderRulesList();
+            renderSeatingGrid();
+        }
+
+        function generateSampleStudents() {
+            const count = countActiveSeats() || 30;
+            const baseNames = [
+                "佐藤 健太", "鈴木 陽菜", "高橋 翔太", "田中 美咲", "伊藤 陸", "渡辺 結衣",
+                "山本 蓮", "中村 葵", "小林 湊", "加藤 凛", "吉田 大翔", "山田 芽依",
+                "佐々木 朝陽", "山口 紬", "松本 樹", "井上 莉子", "木村 悠真", "林 杏",
+                "斎藤 律", "清水 詩", "山崎 颯太", "森 結菜", "池田 碧", "橋本 陽葵",
+                "阿部 暖", "石川 咲良", "山下 悠人", "中島 花", "石井 湊斗", "小川 美月",
+                "前田 蒼", "藤田 凛音", "後藤 陽向", "長谷川 琴音", "村上 律希", "近藤 結月"
+            ];
+            const list = [];
+            for (let i = 0; i < count; i++) {
+                list.push(baseNames[i % baseNames.length] + (i >= baseNames.length ? `_${Math.floor(i/baseNames.length)+1}` : ""));
+            }
+            document.getElementById('student-list-input').value = list.join('\n');
+            handleStudentListChange();
+            showToast(`${count}名分のサンプル名簿を入力しました`, 'info');
+        }
+
+        function countActiveSeats() {
+            let count = 0;
+            for (let r = 0; r < state.rows; r++) {
+                for (let c = 0; c < state.cols; c++) {
+                    if (!state.seats[r][c].disabled) count++;
+                }
+            }
+            return count;
+        }
+
+        /**
+         * ③ 人間関係ルールの追加・削除
+         */
+        function addRelationRule() {
+            const personA = document.getElementById('rule-person-a').value;
+            const personB = document.getElementById('rule-person-b').value;
+            const type = document.getElementById('rule-type').value;
+
+            if (!personA || !personB) {
+                showToast('2人のメンバーを選択してください', 'warning');
+                return;
+            }
+            if (personA === personB) {
+                showToast('異なる2人を選択してください', 'warning');
+                return;
+            }
+
+            // 既存の同一ペアのルールがあれば上書き
+            state.rules = state.rules.filter(r => 
+                !((r.personA === personA && r.personB === personB) || (r.personA === personB && r.personB === personA))
+            );
+
+            state.rules.push({
+                id: Date.now().toString(),
+                personA,
+                personB,
+                type
+            });
+
+            document.getElementById('rule-person-a').value = "";
+            document.getElementById('rule-person-b').value = "";
+            renderRulesList();
+            showToast('距離の条件を追加しました', 'success');
+        }
+
+        function removeRelationRule(id) {
+            state.rules = state.rules.filter(r => r.id !== id);
+            renderRulesList();
+        }
+
+        /**
+         * 座席設定モーダル（①座らない席、②座席の固定指定）
+         */
+        function openSeatModal(r, c) {
+            editingCoord = { r, c };
+            const seat = state.seats[r][c];
+            modalTempDisabled = seat.disabled;
+
+            document.getElementById('modal-seat-title').textContent = `座席の設定（前${r + 1}列目 - 左${c + 1}番）`;
+            
+            // セレクトボックスに生徒一覧をセット
+            const select = document.getElementById('modal-student-select');
+            select.innerHTML = '<option value="">-- 指定なし（ランダムに配置） --</option>';
+            
+            // 他の席で既に固定指定されている生徒を把握
+            const pinnedElsewhere = new Set();
+            for (let ir = 0; ir < state.rows; ir++) {
+                for (let ic = 0; ic < state.cols; ic++) {
+                    if ((ir !== r || ic !== c) && state.seats[ir][ic].pinnedStudent) {
+                        pinnedElsewhere.add(state.seats[ir][ic].pinnedStudent);
+                    }
+                }
+            }
+
+            state.students.forEach(student => {
+                const opt = document.createElement('option');
+                opt.value = student;
+                opt.textContent = pinnedElsewhere.has(student) ? `${student}（他の席で指定中）` : student;
+                if (seat.pinnedStudent === student) {
+                    opt.selected = true;
+                }
+                select.appendChild(opt);
+            });
+
+            updateModalUI();
+            document.getElementById('seat-modal').classList.remove('hidden');
+        }
+
+        function setModalSeatDisabled(disabled) {
+            modalTempDisabled = disabled;
+            updateModalUI();
+        }
+
+        function updateModalUI() {
+            const btnActive = document.getElementById('btn-seat-active');
+            const btnDisabled = document.getElementById('btn-seat-disabled');
+            const pinSection = document.getElementById('modal-pin-section');
+
+            if (modalTempDisabled) {
+                btnActive.className = "p-3 rounded-xl border-2 border-slate-200 text-slate-500 hover:bg-slate-50 text-left transition flex items-center gap-2.5";
+                btnDisabled.className = "p-3 rounded-xl border-2 border-rose-500 bg-rose-50 text-rose-700 text-left transition flex items-center gap-2.5";
+                pinSection.classList.add('opacity-40', 'pointer-events-none');
+            } else {
+                btnActive.className = "p-3 rounded-xl border-2 border-indigo-600 bg-indigo-50 text-indigo-700 text-left transition flex items-center gap-2.5";
+                btnDisabled.className = "p-3 rounded-xl border-2 border-slate-200 text-slate-500 hover:bg-slate-50 text-left transition flex items-center gap-2.5";
+                pinSection.classList.remove('opacity-40', 'pointer-events-none');
+            }
+        }
+
+        function closeSeatModal() {
+            document.getElementById('seat-modal').classList.add('hidden');
+        }
+
+        function saveSeatModal() {
+            const { r, c } = editingCoord;
+            const seat = state.seats[r][c];
+            seat.disabled = modalTempDisabled;
+
+            if (seat.disabled) {
+                seat.pinnedStudent = null;
+                seat.assignedStudent = null;
+            } else {
+                const selectedStudent = document.getElementById('modal-student-select').value;
+                if (selectedStudent) {
+                    // もし他の席に同じ人が固定指定されていたら解除する
+                    for (let ir = 0; ir < state.rows; ir++) {
+                        for (let ic = 0; ic < state.cols; ic++) {
+                            if (state.seats[ir][ic].pinnedStudent === selectedStudent) {
+                                state.seats[ir][ic].pinnedStudent = null;
+                            }
+                            if (state.seats[ir][ic].assignedStudent === selectedStudent) {
+                                state.seats[ir][ic].assignedStudent = null;
+                            }
+                        }
+                    }
+                    seat.pinnedStudent = selectedStudent;
+                    seat.assignedStudent = selectedStudent;
+                } else {
+                    seat.pinnedStudent = null;
+                }
+            }
+
+            closeSeatModal();
+            renderAll();
+            showToast('座席設定を更新しました', 'success');
+        }
+
+        /**
+         * ★ コア機能：条件付きランダム席替えアルゴリズム（山登り法＋マルチスタート最適化）
+         */
+        function runSeatingShuffle() {
+            const activeSeats = [];
+            const pinnedStudents = new Set();
+
+            // 1. 有効な座席と固定座席を抽出
+            for (let r = 0; r < state.rows; r++) {
+                for (let c = 0; c < state.cols; c++) {
+                    const seat = state.seats[r][c];
+                    if (!seat.disabled) {
+                        if (seat.pinnedStudent) {
+                            pinnedStudents.add(seat.pinnedStudent);
+                            seat.assignedStudent = seat.pinnedStudent;
+                        } else {
+                            activeSeats.push({ r, c });
+                        }
+                    } else {
+                        seat.assignedStudent = null;
+                    }
+                }
+            }
+
+            // 2. ランダム配置対象の生徒リストを作成
+            const unpinnedStudents = state.students.filter(s => !pinnedStudents.has(s));
+
+            if (unpinnedStudents.length === 0 && pinnedStudents.size === 0) {
+                showToast('生徒名簿が入力されていません', 'warning');
+                return;
+            }
+
+            if (unpinnedStudents.length > activeSeats.length) {
+                showToast(`座席数が足りません！（生徒: ${state.students.length}人 / 有効席: ${activeSeats.length + pinnedStudents.size}席）`, 'error');
+                return;
+            }
+
+            // 座席数の方が生徒数より多い場合は、余り席用に null を詰める
+            const pool = [...unpinnedStudents];
+            while (pool.length < activeSeats.length) {
+                pool.push(null);
+            }
+
+            // ルールがない場合は単純なFisher-Yatesシャッフルで高速完了
+            if (state.rules.length === 0) {
+                shuffleArray(pool);
+                activeSeats.forEach((coord, idx) => {
+                    state.seats[coord.r][coord.c].assignedStudent = pool[idx];
+                });
+                renderSeatingGrid(true);
+                updateStatusBanner(0, 0);
+                showToast('ランダムに席替えを実行しました！', 'success');
+                return;
+            }
+
+            // 3. 条件（近づける・離す）がある場合の最適化探索
+            // 複数回のランダム初期解からスワップ改善を行い、最もペナルティが低い配置を採用
+            let bestAssignment = null;
+            let bestPenalty = Infinity;
+
+            const trials = 40; // 試行回数
+            const iterationsPerTrial = 150; // 1試行あたりの改善ステップ
+
+            for (let t = 0; t < trials; t++) {
+                const currentPool = [...pool];
+                shuffleArray(currentPool);
+
+                let currentPenalty = evaluatePenalty(activeSeats, currentPool);
+
+                for (let step = 0; step < iterationsPerTrial; step++) {
+                    if (currentPenalty === 0) break; // 完全達成
+
+                    // ランダムに2つの自由席を選んで入れ替えテスト
+                    if (activeSeats.length < 2) break;
+                    const idx1 = Math.floor(Math.random() * activeSeats.length);
+                    let idx2 = Math.floor(Math.random() * activeSeats.length);
+                    if (idx1 === idx2) continue;
+
+                    // スワップ
+                    [currentPool[idx1], currentPool[idx2]] = [currentPool[idx2], currentPool[idx1]];
+                    const newPenalty = evaluatePenalty(activeSeats, currentPool);
+
+                    if (newPenalty <= currentPenalty) {
+                        currentPenalty = newPenalty;
+                    } else {
+                        // 悪化したら元に戻す
+                        [currentPool[idx1], currentPool[idx2]] = [currentPool[idx2], currentPool[idx1]];
+                    }
+                }
+
+                if (currentPenalty < bestPenalty) {
+                    bestPenalty = currentPenalty;
+                    bestAssignment = [...currentPool];
+                }
+                if (bestPenalty === 0) break;
+            }
+
+            // 最良の配置を反映
+            activeSeats.forEach((coord, idx) => {
+                state.seats[coord.r][coord.c].assignedStudent = bestAssignment[idx];
+            });
+
+            renderSeatingGrid(true);
+            const violatedCount = countViolatedRules();
+            updateStatusBanner(state.rules.length, violatedCount);
+            
+            if (violatedCount === 0) {
+                showToast('すべての条件を満たす座席配置が見つかりました！', 'success');
+            } else {
+                showToast(`席替え完了（${violatedCount}件の条件が物理的制約により一部緩和されました）`, 'warning');
+            }
+        }
+
+        /**
+         * 配置のペナルティスコア計算（低いほど理想的な配置）
+         */
+        function evaluatePenalty(activeSeats, currentPool) {
+            // 生徒名 -> {r, c} のマップ構築
+            const posMap = new Map();
+
+            // 固定席の生徒
+            for (let r = 0; r < state.rows; r++) {
+                for (let c = 0; c < state.cols; c++) {
+                    const seat = state.seats[r][c];
+                    if (!seat.disabled && seat.pinnedStudent) {
+                        posMap.set(seat.pinnedStudent, { r, c });
+                    }
+                }
+            }
+            // 自由席の生徒
+            for (let i = 0; i < activeSeats.length; i++) {
+                const student = currentPool[i];
+                if (student) {
+                    posMap.set(student, activeSeats[i]);
+                }
+            }
+
+            let penalty = 0;
+            for (const rule of state.rules) {
+                const posA = posMap.get(rule.personA);
+                const posB = posMap.get(rule.personB);
+                if (!posA || !posB) continue;
+
+                const dr = Math.abs(posA.r - posB.r);
+                const dc = Math.abs(posA.c - posB.c);
+                const manhattan = dr + dc; // マンハッタン距離（前後左右の隣接は1）
+                const chebyshev = Math.max(dr, dc); // チェビシェフ距離（斜め含む周囲8マスは1）
+
+                if (rule.type === 'near') {
+                    // 近づけてほしい：隣り合わせ(manhattan === 1)ならペナルティ0。離れるほど強く減点
+                    if (manhattan > 1) {
+                        penalty += (manhattan - 1) * 100;
+                    }
+                } else if (rule.type === 'apart') {
+                    // 離してほしい：周囲8マス(chebyshev <= 1)なら特大ペナルティ。2マス以内も少しペナルティ
+                    if (chebyshev <= 1) {
+                        penalty += 500;
+                    } else if (manhattan <= 2) {
+                        penalty += 150;
+                    }
+                }
+            }
+            return penalty;
+        }
+
+        /**
+         * 現在の確定配置におけるルール違反数をカウント
+         */
+        function countViolatedRules() {
+            const posMap = new Map();
+            for (let r = 0; r < state.rows; r++) {
+                for (let c = 0; c < state.cols; c++) {
+                    const s = state.seats[r][c].assignedStudent;
+                    if (s) posMap.set(s, { r, c });
+                }
+            }
+
+            let violations = 0;
+            for (const rule of state.rules) {
+                const posA = posMap.get(rule.personA);
+                const posB = posMap.get(rule.personB);
+                if (!posA || !posB) continue;
+
+                const dr = Math.abs(posA.r - posB.r);
+                const dc = Math.abs(posA.c - posB.c);
+                const manhattan = dr + dc;
+                const chebyshev = Math.max(dr, dc);
+
+                if (rule.type === 'near' && manhattan > 1) {
+                    violations++;
+                } else if (rule.type === 'apart' && chebyshev <= 1) {
+                    violations++;
+                }
+            }
+            return violations;
+        }
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        /**
+         * 配置のクリア（固定席以外を空にする）
+         */
+        function clearAssignedSeats() {
+            for (let r = 0; r < state.rows; r++) {
+                for (let c = 0; c < state.cols; c++) {
+                    const seat = state.seats[r][c];
+                    seat.assignedStudent = seat.pinnedStudent ? seat.pinnedStudent : null;
+                }
+            }
+            document.getElementById('status-banner').classList.add('hidden');
+            renderSeatingGrid();
+            showToast('固定席以外の配置をクリアしました', 'info');
+        }
+
+        /**
+         * 視点切り替え（生徒目線 ⇔ 先生・教卓目線）
+         */
+        function toggleTeacherView() {
+            state.isTeacherView = !state.isTeacherView;
+            const textEl = document.getElementById('view-mode-text');
+            const bbTop = document.getElementById('blackboard-top');
+            const bbBottom = document.getElementById('blackboard-bottom');
+
+            if (state.isTeacherView) {
+                textEl.textContent = '教卓・先生目線（黒板が下）';
+                bbTop.classList.add('hidden');
+                bbBottom.classList.remove('hidden');
+                bbBottom.classList.add('flex');
+            } else {
+                textEl.textContent = '生徒目線（黒板が上）';
+                bbTop.classList.remove('hidden');
+                bbBottom.classList.add('hidden');
+                bbBottom.classList.remove('flex');
+            }
+            renderSeatingGrid();
+        }
+
+        /**
+         * 画面全体の再描画
+         */
+        function renderAll() {
+            updateCountersAndDropdowns();
+            renderRulesList();
+            renderSeatingGrid();
+            updatePrintDate();
+        }
+
+        function updateCountersAndDropdowns() {
+            const activeCount = countActiveSeats();
+            const studentCount = state.students.length;
+
+            document.getElementById('seat-count-badge').textContent = `有効座席: ${activeCount}席`;
+            document.getElementById('student-count-badge').textContent = `人数: ${studentCount}人`;
+
+            // 人数と座席数の差異警告
+            const warningEl = document.getElementById('count-warning');
+            const warningText = document.getElementById('count-warning-text');
+            if (studentCount > activeCount) {
+                warningEl.classList.remove('hidden');
+                warningText.textContent = `生徒数（${studentCount}人）が有効座席数（${activeCount}席）より${studentCount - activeCount}人多いです。座席を増やすか名簿を調整してください。`;
+            } else if (studentCount < activeCount && studentCount > 0) {
+                warningEl.classList.remove('hidden');
+                warningText.textContent = `有効座席数（${activeCount}席）に対して生徒が${studentCount}人のため、${activeCount - studentCount}席が空席になります。`;
+            } else {
+                warningEl.classList.add('hidden');
+            }
+
+            // 条件設定用ドロップダウン更新
+            const selA = document.getElementById('rule-person-a');
+            const selB = document.getElementById('rule-person-b');
+            const prevA = selA.value;
+            const prevB = selB.value;
+
+            const optionsHtml = '<option value="">人を選択</option>' + 
+                state.students.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+            
+            selA.innerHTML = optionsHtml;
+            selB.innerHTML = optionsHtml;
+            if (state.students.includes(prevA)) selA.value = prevA;
+            if (state.students.includes(prevB)) selB.value = prevB;
+        }
+
+        function renderRulesList() {
+            const container = document.getElementById('rules-list');
+            if (state.rules.length === 0) {
+                container.innerHTML = '<p class="text-xs text-slate-400 text-center py-3">条件は登録されていません</p>';
+                return;
+            }
+
+            container.innerHTML = state.rules.map(rule => {
+                const isNear = rule.type === 'near';
+                const badgeClass = isNear 
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                    : 'bg-rose-50 text-rose-700 border-rose-200';
+                const icon = isNear ? 'fa-handshake text-emerald-600' : 'fa-bolt text-rose-600';
+                const label = isNear ? '近づける' : '離す';
+
+                return `
+                    <div class="flex items-center justify-between p-2.5 rounded-xl border ${badgeClass} text-xs">
+                        <div class="flex items-center gap-2 overflow-hidden">
+                            <i class="fa-solid ${icon} shrink-0"></i>
+                            <span class="font-bold truncate">${escapeHtml(rule.personA)}</span>
+                            <span class="opacity-70">＆</span>
+                            <span class="font-bold truncate">${escapeHtml(rule.personB)}</span>
+                            <span class="px-1.5 py-0.5 rounded bg-white/80 font-semibold text-[10px] shrink-0">${label}</span>
+                        </div>
+                        <button onclick="removeRelationRule('${rule.id}')" class="text-slate-400 hover:text-slate-700 ml-2 p-1" title="削除">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        /**
+         * 座席グリッドの描画（ドラッグ＆ドロップ入れ替え対応）
+         */
+        function renderSeatingGrid(animate = false) {
+            const grid = document.getElementById('seating-grid');
+            grid.style.gridTemplateColumns = `repeat(${state.cols}, minmax(0, 1fr))`;
+            grid.innerHTML = '';
+
+            // 視点モードに応じて描画順を決定（先生目線の場合は上下左右を180度回転）
+            const rowIndices = Array.from({ length: state.rows }, (_, i) => state.isTeacherView ? state.rows - 1 - i : i);
+            const colIndices = Array.from({ length: state.cols }, (_, i) => state.isTeacherView ? state.cols - 1 - i : i);
+
+            rowIndices.forEach(r => {
+                colIndices.forEach(c => {
+                    const seat = state.seats[r][c];
+                    const card = document.createElement('div');
+                    
+                    // 共通スタイル
+                    let baseClass = "seat-card relative rounded-xl p-2 sm:p-3 min-h-[68px] sm:min-h-[82px] flex flex-col items-center justify-center text-center cursor-pointer transition-all select-none ";
+                    if (animate && !seat.disabled) {
+                        baseClass += "seat-animate ";
+                    }
+
+                    if (seat.disabled) {
+                        // ① 座らない席（空席）
+                        card.className = baseClass + "bg-slate-100/80 border-2 border-dashed border-slate-300 text-slate-400 hover:bg-slate-200/60";
+                        card.innerHTML = `
+                            <i class="fa-solid fa-ban text-xs mb-1 opacity-50"></i>
+                            <span class="text-[11px] font-medium">空席</span>
+                        `;
+                    } else if (seat.pinnedStudent) {
+                        // ② 座席指定（固定）された席
+                        card.className = baseClass + "bg-amber-50 border-2 border-amber-400 text-slate-800 shadow-sm hover:shadow-md";
+                        card.innerHTML = `
+                            <span class="absolute top-1.5 right-2 text-amber-600 text-[11px]" title="座席固定指定中">
+                                <i class="fa-solid fa-thumbtack"></i>
+                            </span>
+                            <span class="text-[10px] text-amber-700/70 font-medium mb-0.5">${r+1}-${c+1}</span>
+                            <span class="font-bold text-xs sm:text-sm leading-tight break-all">${escapeHtml(seat.pinnedStudent)}</span>
+                        `;
+                    } else {
+                        // 通常席
+                        const hasStudent = Boolean(seat.assignedStudent);
+                        card.className = baseClass + (hasStudent 
+                            ? "bg-white border-2 border-slate-200 hover:border-indigo-400 text-slate-800 shadow-sm hover:shadow" 
+                            : "bg-white border border-slate-200 hover:border-indigo-300 text-slate-400");
+                        
+                        card.innerHTML = `
+                            <span class="text-[10px] text-slate-400 font-medium mb-0.5">${r+1}-${c+1}</span>
+                            ${hasStudent 
+                                ? `<span class="font-bold text-xs sm:text-sm leading-tight break-all text-slate-800">${escapeHtml(seat.assignedStudent)}</span>`
+                                : `<span class="text-xs text-slate-300">未配置</span>`
+                            }
+                        `;
+                    }
+
+                    // クリックで設定モーダルを開く
+                    card.onclick = () => openSeatModal(r, c);
+
+                    // ドラッグ＆ドロップによる手動微調整（有効席のみ）
+                    if (!seat.disabled) {
+                        card.draggable = true;
+                        card.ondragstart = (e) => {
+                            draggedCoord = { r, c };
+                            card.classList.add('opacity-50');
+                        };
+                        card.ondragend = () => {
+                            card.classList.remove('opacity-50');
+                            draggedCoord = null;
+                        };
+                        card.ondragover = (e) => {
+                            e.preventDefault();
+                            card.classList.add('ring-2', 'ring-indigo-500');
+                        };
+                        card.ondragleave = () => {
+                            card.classList.remove('ring-2', 'ring-indigo-500');
+                        };
+                        card.ondrop = (e) => {
+                            e.preventDefault();
+                            card.classList.remove('ring-2', 'ring-indigo-500');
+                            if (draggedCoord && (draggedCoord.r !== r || draggedCoord.c !== c)) {
+                                swapSeatsManually(draggedCoord, { r, c });
+                            }
+                        };
+                    }
+
+                    grid.appendChild(card);
+                });
+            });
+        }
+
+        /**
+         * ドラッグ＆ドロップでの手動座席入れ替え
+         */
+        function swapSeatsManually(coordA, coordB) {
+            const seatA = state.seats[coordA.r][coordA.c];
+            const seatB = state.seats[coordB.r][coordB.c];
+
+            const tempAssigned = seatA.assignedStudent;
+            seatA.assignedStudent = seatB.assignedStudent;
+            seatB.assignedStudent = tempAssigned;
+
+            // 固定指定も一緒に移動させる
+            const tempPinned = seatA.pinnedStudent;
+            seatA.pinnedStudent = seatB.pinnedStudent;
+            seatB.pinnedStudent = tempPinned;
+
+            renderSeatingGrid();
+            if (state.rules.length > 0) {
+                updateStatusBanner(state.rules.length, countViolatedRules());
+            }
+            showToast('座席を入れ替えました', 'info');
+        }
+
+        function updateStatusBanner(totalRules, violatedCount) {
+            const banner = document.getElementById('status-banner');
+            const icon = document.getElementById('status-icon');
+            const msg = document.getElementById('status-message');
+            const score = document.getElementById('status-score');
+
+            if (totalRules === 0) {
+                banner.classList.add('hidden');
+                return;
+            }
+
+            banner.classList.remove('hidden');
+            const satisfied = totalRules - violatedCount;
+            score.textContent = `達成: ${satisfied} / ${totalRules} 件`;
+
+            if (violatedCount === 0) {
+                banner.className = "rounded-xl p-3.5 text-sm flex items-center justify-between border bg-emerald-50 border-emerald-200 text-emerald-800 no-print";
+                icon.className = "fa-solid fa-circle-check text-lg text-emerald-600";
+                msg.textContent = "設定された「近づける・離す」条件をすべて満たしています！";
+            } else {
+                banner.className = "rounded-xl p-3.5 text-sm flex items-center justify-between border bg-amber-50 border-amber-200 text-amber-800 no-print";
+                icon.className = "fa-solid fa-circle-exclamation text-lg text-amber-600";
+                msg.textContent = `一部の条件（${violatedCount}件）が座席数の都合等で緩和されています。再度実行するかドラッグで調整できます。`;
+            }
+        }
+
+        /**
+         * CSVエクスポート機能
+         */
+        function exportCSV() {
+            let csvContent = "\uFEFF"; // Excel文字化け防止BOM
+            const rowIndices = Array.from({ length: state.rows }, (_, i) => state.isTeacherView ? state.rows - 1 - i : i);
+            const colIndices = Array.from({ length: state.cols }, (_, i) => state.isTeacherView ? state.cols - 1 - i : i);
+
+            if (!state.isTeacherView) {
+                csvContent += "【黒板・教卓側】\n";
+            }
+
+            rowIndices.forEach(r => {
+                const rowCells = colIndices.map(c => {
+                    const seat = state.seats[r][c];
+                    if (seat.disabled) return "（空席）";
+                    return seat.assignedStudent ? `"${seat.assignedStudent.replace(/"/g, '""')}"` : "";
+                });
+                csvContent += rowCells.join(",") + "\n";
+            });
+
+            if (state.isTeacherView) {
+                csvContent += "【教卓・黒板側（先生目線）】\n";
+            }
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.setAttribute("href", url);
+            const dateStr = new Date().toISOString().slice(0, 10);
+            link.setAttribute("download", `座席表_${dateStr}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            showToast('座席表をCSVファイルでダウンロードしました', 'success');
+        }
+
+        /**
+         * ローカルストレージ保存・読込・初期化
+         */
+        function saveToLocalStorage() {
+            try {
+                localStorage.setItem('smart_seating_chart_v1', JSON.stringify(state));
+                showToast('現在の設定と座席表をブラウザに保存しました', 'success');
+            } catch (e) {
+                showToast('保存に失敗しました', 'error');
+            }
+        }
+
+        function loadFromLocalStorage() {
+            try {
+                const raw = localStorage.getItem('smart_seating_chart_v1');
+                if (!raw) return false;
+                const parsed = JSON.parse(raw);
+                state = { ...state, ...parsed };
+                document.getElementById('input-rows').value = state.rows;
+                document.getElementById('input-cols').value = state.cols;
+                document.getElementById('student-list-input').value = state.students.join('\n');
+                
+                // 視点ボタンの見た目同期
+                if (state.isTeacherView) {
+                    document.getElementById('view-mode-text').textContent = '教卓・先生目線（黒板が下）';
+                    document.getElementById('blackboard-top').classList.add('hidden');
+                    document.getElementById('blackboard-bottom').classList.remove('hidden');
+                    document.getElementById('blackboard-bottom').classList.add('flex');
+                }
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function resetAllData() {
+            localStorage.removeItem('smart_seating_chart_v1');
+            state.rules = [];
+            state.seats = [];
+            state.isTeacherView = false;
+            document.getElementById('view-mode-text').textContent = '生徒目線（黒板が上）';
+            document.getElementById('blackboard-top').classList.remove('hidden');
+            document.getElementById('blackboard-bottom').classList.add('hidden');
+            document.getElementById('status-banner').classList.add('hidden');
+            initDefaultData();
+            renderAll();
+            showToast('すべての設定を初期状態に戻しました', 'info');
+        }
+
+        function updatePrintDate() {
+            const now = new Date();
+            document.getElementById('print-date').textContent = `作成日: ${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日`;
+        }
+
+        /**
+         * トースト通知表示関数（alert代替）
+         */
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            
+            const styles = {
+                success: 'bg-emerald-600 text-white',
+                warning: 'bg-amber-500 text-white',
+                error: 'bg-rose-600 text-white',
+                info: 'bg-slate-800 text-white'
+            };
+            const icons = {
+                success: 'fa-circle-check',
+                warning: 'fa-triangle-exclamation',
+                error: 'fa-circle-xmark',
+                info: 'fa-circle-info'
+            };
+
+            toast.className = `${styles[type]} px-4 py-3 rounded-xl shadow-lg text-xs sm:text-sm font-medium flex items-center gap-2.5 transform transition-all duration-300 translate-y-2 opacity-0 pointer-events-auto max-w-sm`;
+            toast.innerHTML = `<i class="fa-solid ${icons[type]}"></i><span>${escapeHtml(message)}</span>`;
+            
+            container.appendChild(toast);
+            
+            requestAnimationFrame(() => {
+                toast.classList.remove('translate-y-2', 'opacity-0');
+            });
+
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-y-2');
+                setTimeout(() => toast.remove(), 300);
+            }, 3200);
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/[&<>"']/g, function(m) {
+                return {
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;',
+                    "'": '&#39;'
+                }[m];
+            });
+        }
+    </script>
+</body>
+</html>
